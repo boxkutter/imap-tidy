@@ -50,7 +50,12 @@ For each new message in the watched folder:
    * Subject becomes `[de→EN] <translated subject>`; headers
      `X-Original-Subject`, `X-Translated-From` and `X-Translated-By` are added;
    * the body is `multipart/alternative`: plain text (translation, divider,
-     original text) and HTML (highlighted translation, `<hr>`, original HTML);
+     original text) and HTML (highlighted translation, `<hr>`, original HTML
+     with its own styles);
+   * hard line wraps from the sender's mail program (plain text wrapped at
+     ~72-78 characters, including `format=flowed`) are undone, so the text
+     fills the screen like the original does and the translator gets whole
+     sentences;
    * inline images (`cid:` references, e.g. logos and signatures) are embedded
      again, so the original part of the message shows them as received;
    * original attachments are re-attached, plus the untouched original as
@@ -302,7 +307,7 @@ Everything goes to stdout: `docker compose logs -f mail-translate`. Each line
 carries the account name (`[main]` for startup):
 
 ```
-INFO    [main] mail-translate 1.1.0 starting: translator=libretranslate target=en max_chars=30000, 2 account(s)
+INFO    [main] mail-translate 1.2.0 starting: translator=libretranslate target=en max_chars=30000, 2 account(s)
 INFO    [main] account personal: user=me@example.com host=mail.example.com:993 watch=Pending deliver=INBOX originals=Originals skip_langs=en likely_langs=sv ...
 INFO    [personal] connecting to mail.example.com:993 as me@example.com
 INFO    [personal] connected; watching Pending (last uid 1203, uidvalidity 1791537148)

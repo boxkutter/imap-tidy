@@ -42,13 +42,100 @@ def html_body_inner(s: str) -> str:
     return s
 
 
+def html_head_styles(s: str) -> str:
+    """The original's <style> blocks, so its layout survives being embedded."""
+    head = re.search(r"(?is)<head\b.*?</head>", s)
+    return "".join(re.findall(r"(?is)<style\b.*?</style>", head.group(0))) if head else ""
+
+
+# --- undoing hard line wraps ----------------------------------------------------
+# Plain-text mail is usually wrapped at ~72-78 characters by the sender's client.
+# Mail apps reflow it to the screen width, but our translated copy would keep the
+# breaks (in the translation and in the embedded original), so text only filled
+# part of the screen. Translators also do better on whole sentences.
+
+_QUOTE = re.compile(r"^((?:>\s?)*)")
+_LIST_ITEM = re.compile(r"^\s*([-*•–]|\d+[.)]|[a-zA-Z][.)])\s")
+
+
+def unflow(text: str, delsp: bool = False) -> str:
+    """Decode RFC 3676 format=flowed: a line ending in a space continues on the next."""
+    out, cur, cur_depth = [], None, 0
+    for line in text.split("\n"):
+        quote = _QUOTE.match(line).group(1)
+        depth = quote.count(">")
+        body = line[len(quote):]
+        if body.startswith(" "):           # space-stuffing
+            body = body[1:]
+        if cur is not None and depth == cur_depth:
+            cur += body
+        else:
+            if cur is not None:
+                out.append(cur)
+            cur, cur_depth = ("> " * depth if depth else "") + body, depth
+        soft = body.endswith(" ") and body.rstrip() != "--"
+        if soft:
+            if delsp:
+                cur = cur[:-1]
+        else:
+            out.append(cur)
+            cur = None
+    if cur is not None:
+        out.append(cur)
+    return "\n".join(out)
+
+
+def unwrap(text: str) -> str:
+    """Join lines that were broken only because they reached the sender's wrap width.
+
+    A line counts as wrapped if the next line's first word would not have fitted on
+    it (classic greedy wrapping). Short lines, blank lines, list items, quotes of a
+    different depth and signatures keep their breaks.
+    """
+    lines = text.split("\n")
+    # Lines of prose longer than 100 characters mean the sender did not hard-wrap.
+    # (Long lines without spaces are URLs and the like; wrapping can't break those.)
+    if any(len(l) > 100 and " " in l.strip() for l in lines):
+        return text
+    lengths = [len(l.rstrip()) for l in lines if l.strip() and len(l.rstrip()) <= 100]
+    if len(lengths) < 2:
+        return text
+    width = max(lengths)                     # the wrap width the sender used
+    if width < 50:
+        return text                          # only short lines: addresses, lists...
+    out = [lines[0]]
+    for i, nxt in enumerate(lines[1:]):
+        prev = lines[i]                      # the original line before `nxt`, for the fit test
+        pq, nq = _QUOTE.match(prev).group(1), _QUOTE.match(nxt).group(1)
+        nbody = nxt[len(nq):]
+        first_word = nbody.split(" ", 1)[0] if nbody.strip() else ""
+        joinable = (
+            prev.strip() and nbody.strip()
+            and pq.replace(" ", "") == nq.replace(" ", "")
+            and prev.rstrip() != "--" and not prev.startswith("-- ")
+            and not _LIST_ITEM.match(nbody)
+            and len(prev.rstrip()) + 1 + len(first_word) > width
+            and len(prev.rstrip()) <= width
+        )
+        if joinable:
+            out[-1] = out[-1].rstrip() + " " + nbody.lstrip()
+        else:
+            out.append(nxt)
+    return "\n".join(out)
+
+
 def get_bodies(msg) -> tuple[str, str | None]:
-    """Return (plain_text, html_or_None). Plain text is derived from HTML if needed."""
+    """Return (plain_text, html_or_None). Plain text is derived from HTML if needed,
+    with the sender's hard line wraps undone."""
     plain = msg.get_body(preferencelist=("plain",))
     htmlp = msg.get_body(preferencelist=("html",))
     html_s = htmlp.get_content() if htmlp is not None else None
     if plain is not None:
-        text = plain.get_content()
+        text = plain.get_content().replace("\r\n", "\n")
+        if (plain.get_param("format") or "").lower() == "flowed":
+            text = unflow(text, (plain.get_param("delsp") or "").lower() == "yes")
+        else:
+            text = unwrap(text)
     elif html_s:
         text = html_to_text(html_s)
     else:
@@ -135,12 +222,20 @@ def build_translated(orig, raw: bytes, subject_tr: str, body_tr: str, src: str, 
     new.set_content(f"{body_tr}\n\n{divider}\n\n{text}\n")
 
     html_tr = "<br>\n".join(html.escape(line) for line in body_tr.splitlines())
+    # Plain-text originals are shown in the reader's normal font and reflow to the
+    # screen width, as the mail app shows them, rather than as a monospace <pre> block.
     original_html = (html_body_inner(html_s) if html_s
-                     else f"<pre style=\"white-space:pre-wrap\">{html.escape(text)}</pre>")
+                     else f"<div style=\"white-space:pre-wrap;overflow-wrap:anywhere\">"
+                          f"{html.escape(text)}</div>")
+    # Keep the original's <style> blocks and a mobile viewport so a newsletter's
+    # responsive layout still works once it is embedded below the translation.
+    head = ("<meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+            + (html_head_styles(html_s) if html_s else ""))
     html_out = (
-        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body>"
+        f"<!DOCTYPE html><html><head>{head}</head><body>"
         "<div style=\"border-left:4px solid #3b82f6;padding:8px 12px;margin-bottom:16px;"
-        "background:#f3f6fb;color:#111;font-family:sans-serif\">"
+        "background:#f3f6fb;color:#111\">"
         f"<div style=\"font-size:12px;color:#555;margin-bottom:6px\">"
         f"Translated {html.escape(src)} → {html.escape(target)} by mail-translate</div>"
         f"<div>{html_tr}</div></div>"
