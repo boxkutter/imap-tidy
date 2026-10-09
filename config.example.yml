@@ -1,0 +1,32 @@
+# mail-translate configuration. Copy to config.yml and edit.
+# Secrets never go here: write ${VAR} and put VAR in .env.
+
+translator:
+  provider: deepl            # deepl | libretranslate | llm  (credentials/URLs in .env)
+  target_lang: en            # language to translate into
+  max_chars: 30000           # longer bodies are truncated before translation
+
+defaults:                    # any account can override any of these
+  watch: Pending             # folder to watch for new mail
+  deliver: INBOX             # where translated copies / readable mail end up
+  originals: Originals       # where untouched originals of translated mail are kept
+  skip_langs: [en]           # languages you read; mail in these is never translated
+  attach_original: true      # attach the untouched original as original.eml
+  process_existing: false    # true = also process mail already in `watch` on first run
+  # port: 993
+  # verify_tls: true         # false only for a self-signed certificate
+
+accounts:
+  - name: personal           # used in logs
+    host: mail.example.com
+    port: 993
+    user: me@example.com
+    password: ${PASS_PERSONAL}
+
+  - name: work
+    host: mail.example.com
+    user: me@work-domain.com
+    password: ${PASS_WORK}
+    skip_langs: [en, sv]
+    watch: INBOX             # "simple setup": no Sieve rule, watch INBOX directly
+    deliver: INBOX

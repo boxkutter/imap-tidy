@@ -1,0 +1,61 @@
+# mail-translate: works as-is with the Unraid 7 Compose Manager plugin.
+# Edit the config block below, put passwords/keys in the .env file, Compose Up.
+#
+# `$${NAME}` (double $) is deliberate: compose leaves it as ${NAME} and
+# mail-translate fills it in from .env at startup, so passwords with any
+# characters are safe and never appear in this file.
+
+services:
+  mail-translate:
+    image: ghcr.io/boxkutter/imap-tidy:latest
+    # build: https://github.com/boxkutter/imap-tidy.git#main   # alternative: build from source
+    container_name: mail-translate
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PUID: 99        # nobody  (Unraid appdata default)
+      PGID: 100       # users
+    volumes:
+      - /mnt/user/appdata/mail-translate:/data   # state (last processed UID per account)
+    configs:
+      - source: mail-translate
+        target: /config.yml
+
+  # Optional: self-hosted translator. Uncomment, set `provider: libretranslate`
+  # above and LT_URL=http://libretranslate:5000 in .env.
+  # libretranslate:
+  #   image: libretranslate/libretranslate:latest
+  #   container_name: libretranslate
+  #   restart: unless-stopped
+  #   environment:
+  #     - LT_LOAD_ONLY=en,de,fr,es,it,nl,pt,sv,pl,ru,ja,zh
+  #   volumes:
+  #     - /mnt/user/appdata/libretranslate:/home/libretranslate/.local
+
+configs:
+  mail-translate:
+    content: |
+      translator:
+        provider: deepl            # deepl | libretranslate | llm
+        target_lang: en
+        max_chars: 30000
+
+      defaults:                    # any account can override these
+        watch: Pending             # Sieve rule files new mail here (see README)
+        deliver: INBOX
+        originals: Originals
+        skip_langs: [en]
+        attach_original: true
+        process_existing: false
+
+      accounts:
+        - name: personal
+          host: mail.example.com
+          user: me@example.com
+          password: $${PASS_PERSONAL}
+
+        # - name: work
+        #   host: mail.example.com
+        #   user: me@work-domain.com
+        #   password: $${PASS_WORK}
+        #   skip_langs: [en, sv]

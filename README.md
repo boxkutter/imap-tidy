@@ -68,29 +68,57 @@ You can search or filter on these keywords in Thunderbird and Roundcube.
 
 ## Setup
 
-Requirements: Docker with Compose, and IMAP access (port 993, TLS) to your
-mail server.
+You don't need to build anything: GitHub Actions publishes the image to
+`ghcr.io/boxkutter/imap-tidy:latest` on every push to `main`. You need two
+files, `docker-compose.yml` (with the config inline) and `.env` (secrets).
 
-```bash
-git clone <this repo> mail-translate && cd mail-translate
-cp config.example.yml config.yml     # accounts, folders, translator
-cp .env.example .env                 # passwords and API keys
-mkdir -p state                       # must be writable by uid 1000 (see below)
-docker compose up -d --build
-docker compose logs -f
-```
+### Unraid 7 (Compose Manager plugin)
 
-* Edit `config.yml`: one entry per mailbox. Passwords are written as
-  `password: ${PASS_PERSONAL}` and the value goes in `.env`.
-* `state/` holds one small JSON file per account (last processed UID). The
-  container runs as uid 1000; if your user has a different uid, run
-  `sudo chown 1000:1000 state`.
+1. **Docker → Compose → Add New Stack**, name it `mail-translate`.
+2. **Edit Stack → Compose File**: paste [`docker-compose.yml`](docker-compose.yml)
+   and edit the `configs:` block at the bottom: your accounts, folders,
+   translator. Leave passwords as `$${PASS_PERSONAL}` (double `$`).
+3. **Edit Stack → Env File**: paste [`.env.example`](.env.example) and fill
+   in the passwords and translator key, **in single quotes**.
+4. **Compose Up**, then open the stack's logs.
+
+State (one small JSON file per account) goes in
+`/mnt/user/appdata/mail-translate/state`, owned by `nobody:users` (99:100);
+change `PUID`/`PGID` if you want another owner. To change the config later,
+edit the stack and Compose Up again.
+
+If the GitHub repo is private, the image is private too: either make the
+package public (GitHub → your profile → Packages → imap-tidy → Package
+settings → Change visibility) or run once on the Unraid terminal
+`docker login ghcr.io -u boxkutter` with a personal access token that has
+`read:packages`.
+
+### Any other Docker host
+
+Same two files: `curl -O` them (or clone the repo), adjust the volume path
+`/mnt/user/appdata/mail-translate`, `cp .env.example .env`, edit, then
+`docker compose up -d && docker compose logs -f`.
+
+To build from source instead of pulling, replace `image:` with
+`build: https://github.com/boxkutter/imap-tidy.git#main` (or `build: .` in a
+clone).
+
+If you prefer a separate config file to the inline block, remove `configs:`
+from the service and put the file at `<appdata>/config.yml` (see
+[`config.example.yml`](config.example.yml)); it is picked up automatically.
+
+### Notes
+
 * `host` is whatever name reaches Dovecot's IMAP port from the container:
   your public mail hostname works everywhere. If poste.io uses a self-signed
   certificate set `verify_tls: false` (prefer fixing the certificate).
 * By default only mail arriving **after** the first start is processed. Set
   `process_existing: true` (once) to also process what is already in the
   watched folder.
+* Container paths: `/data` (state in `/data/state`), config read from
+  `/config.yml` or `/data/config.yml`; override with `CONFIG`, `DATA_DIR`,
+  `STATE_DIR`. The container starts as root only to `chown` the state dir,
+  then runs as `PUID:PGID`.
 
 ### Recommended: Sieve rule so clients never see untranslated mail
 
@@ -108,7 +136,7 @@ see the finished message (one notification, no flicker).
    newsletters to a folder, will not see it: they run before translation.
    Spam rules that file to Junk should stay above this one so spam is not
    translated.)
-4. In `config.yml` keep `watch: Pending` and `deliver: INBOX` (the defaults).
+4. In the config keep `watch: Pending` and `deliver: INBOX` (the defaults).
 
 The equivalent raw Sieve script, if you prefer to edit it directly:
 
@@ -130,7 +158,7 @@ INBOX and the original is moved to `Originals`. Your phone may notify twice.
 
 ## Configuration reference
 
-`config.yml` (see `config.example.yml`). Unknown keys are rejected, so typos
+The `configs:` block in `docker-compose.yml` (or `config.yml`, see `config.example.yml`). Unknown keys are rejected, so typos
 fail at startup instead of being silently ignored.
 
 | Key | Where | Default | Meaning |
@@ -152,13 +180,15 @@ fail at startup instead of being silently ignored.
 
 Any key under `defaults:` applies to every account unless the account sets
 it. Any string may contain `${VAR}`, expanded from the environment (`.env`);
-an undefined variable is a startup error.
+an undefined variable is a startup error. Inside the compose file write
+`$${VAR}` so compose passes it through untouched.
 
 Environment variables (`.env`):
 
 | Variable | Used for |
 |---|---|
 | `LOG_LEVEL` | `DEBUG`, `INFO` (default), `WARNING`, `ERROR` |
+| `PUID`, `PGID` | User/group the service runs as and owns the state files (default 99/100) |
 | `DEEPL_API_KEY`, `DEEPL_URL` | DeepL key; URL defaults to the free API (`https://api-free.deepl.com/v2/translate`), Pro is `https://api.deepl.com/v2/translate` |
 | `LT_URL`, `LT_API_KEY` | LibreTranslate base URL (default `http://libretranslate:5000`), optional key |
 | `LLM_URL`, `LLM_MODEL`, `LLM_API_KEY` | OpenAI-compatible base URL and model (both required), optional key |
@@ -227,7 +257,7 @@ Errors that concern a message reach your inbox, not just the logs:
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
 pytest
-python -m translate_mail config.yml     # run locally (STATE_DIR=./state to keep state here)
+STATE_DIR=./state python -m translate_mail config.yml     # run locally
 ```
 
 The tests cover language detection, message building, config loading and
