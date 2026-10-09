@@ -45,6 +45,7 @@ configs:
         deliver: INBOX
         originals: Originals
         skip_langs: [en]
+        likely_langs: []           # e.g. [sv] if most foreign mail is Swedish
         attach_original: true
         process_existing: false
 

@@ -214,7 +214,9 @@ class AccountWorker:
             return
 
         text, _ = get_bodies(orig)
-        lang = detect_message_lang(text, subject)
+        # Languages you read count as likely too: an unsure guess between English and
+        # something exotic should not cost a translation.
+        lang = detect_message_lang(text, subject, self.a.likely_langs + self.a.skip_langs)
         if lang is None or lang in self.a.skip_langs:
             self.pass_through(client, uid, lang, subject)
             return
@@ -223,8 +225,11 @@ class AccountWorker:
             text = text[: self.tcfg.max_chars] + "\n\n[… truncated for translation …]"
         t0 = time.monotonic()
         try:
+            # A language from likely_langs is trusted as the source, so the translator
+            # doesn't second-guess it with its own (often weaker) detection.
+            source = lang if lang in self.a.likely_langs else None
             (subject_tr, body_tr), src = self.translator.translate(
-                [subject or "(no subject)", text or "(empty message)"])
+                [subject or "(no subject)", text or "(empty message)"], source=source)
         except Exception as e:
             self.translator_failures += 1
             if isinstance(e, TranslatorError):

@@ -7,7 +7,9 @@ from email.message import EmailMessage
 from datetime import datetime, timezone
 from email.utils import format_datetime, formataddr, make_msgid
 
-import py3langid as langid
+from urllib.parse import unquote
+
+from py3langid.langid import MODEL_FILE, LanguageIdentifier
 
 # Headers regenerated on the translated copy; everything else is copied verbatim.
 REGENERATED = {"content-type", "content-transfer-encoding", "content-disposition",
@@ -54,18 +56,62 @@ def get_bodies(msg) -> tuple[str, str | None]:
     return text.strip(), html_s
 
 
-def detect_lang(text: str) -> str | None:
-    """ISO 639-1 code of `text`, or None if there is too little text to tell."""
+# Normalised probabilities, so "how sure" can be compared across languages.
+_IDENTIFIER = LanguageIdentifier.from_model_file(MODEL_FILE, norm_probs=True)
+
+# Below this confidence the top guess is considered uncertain, and a language from
+# `likely` wins if it is a reasonably close runner-up (at least LIKELY_RATIO of the top).
+UNCERTAIN = 0.6
+LIKELY_RATIO = 0.2
+
+
+def detect_lang(text: str, likely=()) -> str | None:
+    """ISO 639-1 code of `text`, or None if there is too little text to tell.
+
+    `likely` lists languages you expect to receive: when detection is unsure,
+    one of those is preferred over an exotic or similar-looking alternative.
+    """
     sample = " ".join(text[:4000].split())
     if len(sample) < 20:
         return None
-    lang, _ = langid.classify(sample)
-    return lang.lower()
+    ranked = _IDENTIFIER.rank(sample)
+    top, p = ranked[0]
+    if likely and top not in likely and p < UNCERTAIN:
+        probs = dict(ranked)
+        best = max(likely, key=lambda lang: probs.get(lang, 0.0))
+        if probs.get(best, 0.0) >= LIKELY_RATIO * p:
+            return best
+    return top.lower()
 
 
-def detect_message_lang(text: str, subject: str) -> str | None:
+def detect_message_lang(text: str, subject: str, likely=()) -> str | None:
     """Body first, subject as fallback."""
-    return detect_lang(text) or detect_lang(subject)
+    return detect_lang(text, likely) or detect_lang(subject, likely)
+
+
+def _referenced_cids(html_s: str) -> set[str]:
+    return {unquote(m).strip("<>").lower() for m in re.findall(r"""cid:([^"'\s>)]+)""", html_s, flags=re.I)}
+
+
+def _walk_own_parts(msg):
+    """Like msg.walk(), but without descending into attached messages (message/rfc822)."""
+    yield msg
+    if msg.is_multipart() and msg.get_content_maintype() != "message":
+        for sub in msg.iter_parts():
+            yield from _walk_own_parts(sub)
+
+
+def _inline_parts(orig, html_s):
+    """Parts (anywhere in the message) whose Content-ID the HTML body references."""
+    if not html_s:
+        return []
+    wanted = _referenced_cids(html_s)
+    found = []
+    for part in _walk_own_parts(orig):
+        cid = str(part.get("Content-ID", "") or "").strip().strip("<>").lower()
+        if cid and cid in wanted and not part.is_multipart():
+            found.append(part)
+    return found
 
 
 def build_translated(orig, raw: bytes, subject_tr: str, body_tr: str, src: str, target: str,
@@ -103,8 +149,25 @@ def build_translated(orig, raw: bytes, subject_tr: str, body_tr: str, src: str, 
     )
     new.add_alternative(html_out, subtype="html")
 
+    # Inline images (<img src="cid:...">) go into a multipart/related next to the HTML,
+    # with their original Content-ID, so the embedded original renders as received.
+    inline = _inline_parts(orig, html_s)
+    if inline:
+        html_part = new.get_body(("html",))
+        for part in inline:
+            html_part.add_related(
+                part.get_payload(decode=True) or b"",
+                maintype=part.get_content_maintype(),
+                subtype=part.get_content_subtype(),
+                cid=part["Content-ID"].strip(),
+                filename=part.get_filename(),
+            )
+    inline_ids = {id(p) for p in inline}
+
     # Carry over attachments so they stay one click away.
     for part in orig.iter_attachments():
+        if id(part) in inline_ids:
+            continue  # already embedded above
         filename = part.get_filename() or "attachment"
         if part.get_content_type() == "message/rfc822":
             inner = part.get_payload(0) if part.is_multipart() else None

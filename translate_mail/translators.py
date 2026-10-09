@@ -1,7 +1,7 @@
 """Translation backends.
 
-Each translator has ``translate(texts) -> (translations, source_lang)`` and a
-``name``. Settings come from environment variables so API keys stay in `.env`.
+Each translator has ``translate(texts, source=None) -> (translations, source_lang)``
+and a ``name``. ``source`` is a language we are already sure of; None means auto-detect. Settings come from environment variables so API keys stay in `.env`.
 """
 
 import logging
@@ -60,10 +60,13 @@ class DeepL:
         self.url = env.get("DEEPL_URL") or "https://api-free.deepl.com/v2/translate"
         self.target = target_lang.upper()
 
-    def translate(self, texts):
+    def translate(self, texts, source=None):
+        payload = {"text": texts, "target_lang": self.target}
+        if source:
+            payload["source_lang"] = source.upper()
         data = post_json(
             self.url,
-            {"text": texts, "target_lang": self.target},
+            payload,
             headers={"Authorization": f"DeepL-Auth-Key {self.key}"},
         )
         try:
@@ -81,7 +84,9 @@ class LibreTranslate:
         self.key = env.get("LT_API_KEY", "")
         self.target = target_lang.split("-")[0]
 
-    def translate(self, texts):
+    def translate(self, texts, source=None):
+        if source:
+            return [self._text(self._post(t, source)) for t in texts], source.lower()
         # LibreTranslate detects the language per request, and is unreliable on short
         # text like a subject line. So translate the longest text (the body) first with
         # auto-detection, then translate the rest *from that language*: the label and
@@ -89,12 +94,16 @@ class LibreTranslate:
         out, src = [None] * len(texts), ""
         for i in sorted(range(len(texts)), key=lambda i: -len(texts[i])):
             data = self._post(texts[i], src or "auto")
-            try:
-                out[i] = data["translatedText"]
-            except (KeyError, TypeError):
-                raise TranslatorError(f"unexpected LibreTranslate response: {str(data)[:300]}") from None
+            out[i] = self._text(data)
             src = src or ((data.get("detectedLanguage") or {}).get("language") or "")
         return out, src.lower()
+
+    @staticmethod
+    def _text(data):
+        try:
+            return data["translatedText"]
+        except (KeyError, TypeError):
+            raise TranslatorError(f"unexpected LibreTranslate response: {str(data)[:300]}") from None
 
     def _post(self, text, source):
         payload = {"q": text, "source": source, "target": self.target, "format": "text"}
@@ -122,9 +131,10 @@ class LLM:
         self.key = env.get("LLM_API_KEY", "")
         self.target = target_lang
 
-    def translate(self, texts):
+    def translate(self, texts, source=None):
+        hint = f"The source language is most likely '{source}'. " if source else ""
         prompt = (
-            f"Translate the following email into the language with code '{self.target}'. "
+            f"Translate the following email into the language with code '{self.target}'. {hint}"
             f"Preserve line breaks, lists and formatting. Do not add commentary. "
             f"The input has {len(texts)} sections separated by a line containing only {SEP}; "
             f"return exactly {len(texts)} translated sections separated the same way. "

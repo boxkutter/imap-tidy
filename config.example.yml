@@ -11,6 +11,7 @@ defaults:                    # any account can override any of these
   deliver: INBOX             # where translated copies / readable mail end up
   originals: Originals       # where untouched originals of translated mail are kept
   skip_langs: [en]           # languages you read; mail in these is never translated
+  likely_langs: []           # languages you mostly receive, e.g. [sv]: preferred when detection is unsure
   attach_original: true      # attach the untouched original as original.eml
   process_existing: false    # true = also process mail already in `watch` on first run
   # port: 993

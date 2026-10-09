@@ -36,6 +36,27 @@ def test_deepl_request_and_parse():
     assert post.call_args.kwargs["timeout"]
 
 
+def test_deepl_with_source():
+    data = {"translations": [{"detected_source_language": "SV", "text": "Hi"}]}
+    with mock.patch("requests.post", return_value=resp(json_data=data)) as post:
+        assert DeepL("en", {"DEEPL_API_KEY": "k"}).translate(["Hej"], source="sv") == (["Hi"], "sv")
+    assert post.call_args.kwargs["json"]["source_lang"] == "SV"
+
+
+def test_libretranslate_with_source_skips_detection():
+    with mock.patch("requests.post", return_value=resp(json_data={"translatedText": "x"})) as post:
+        assert LibreTranslate("en", {}).translate(["Hej", "Hej, hur mår du?"], source="sv") == (["x", "x"], "sv")
+    assert [c.kwargs["json"]["source"] for c in post.call_args_list] == ["sv", "sv"]
+
+
+def test_llm_source_hint_in_prompt():
+    t = LLM("en", {"LLM_URL": "http://x/v1", "LLM_MODEL": "m"})
+    content = "LANG: sv\na\n<<<SEP>>>\nb"
+    with mock.patch("requests.post", return_value=resp(json_data={"choices": [{"message": {"content": content}}]})) as post:
+        t.translate(["x", "y"], source="sv")
+    assert "most likely 'sv'" in post.call_args.kwargs["json"]["messages"][0]["content"]
+
+
 def test_deepl_needs_key():
     with pytest.raises(ConfigError, match="DEEPL_API_KEY"):
         DeepL("en", {})

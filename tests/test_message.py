@@ -1,4 +1,4 @@
-from translate_mail.message import (build_error_notice, build_translated, detect_lang, detect_message_lang,
+from translate_mail.message import (_walk_own_parts, build_error_notice, build_translated, detect_lang, detect_message_lang,
                                     get_bodies, html_to_text, parse, to_bytes)
 
 from .conftest import ENGLISH, GERMAN, make_mail
@@ -141,3 +141,70 @@ def test_error_notice(account):
     body = n.get_content()
     for s in ("test", "7", "hans@example.de", "boom", "Traceback...", "$TranslateFailed", "INBOX"):
         assert s in body
+
+
+# ---- inline (cid:) images ---------------------------------------------------
+
+PNG = b"\x89PNG\r\n\x1a\nfake-logo"
+
+
+def outlook_style_mail():
+    """alternative[ plain, related[ html, image ] ] plus a real attachment, like Outlook sends."""
+    html_body = '<html><body><p>Hallo</p><img src="cid:image001.png@01DA0000.11223344"></body></html>'
+    m2 = parse(make_mail())
+    m2.set_content(GERMAN)
+    m2.add_alternative(html_body, subtype="html")
+    m2.get_body(("html",)).add_related(PNG, maintype="image", subtype="png",
+                                       cid="<image001.png@01DA0000.11223344>", filename="image001.png")
+    m2.add_attachment(b"%PDF", maintype="application", subtype="pdf", filename="rechnung.pdf")
+    return to_bytes(m2)
+
+
+def test_inline_images_are_embedded():
+    raw = outlook_style_mail()
+    _, new = build(raw)
+    html_part = new.get_body(("html",))
+    assert 'src="cid:image001.png@01DA0000.11223344"' in html_part.get_content()
+    # The HTML sits in a multipart/related together with the image, same Content-ID.
+    related = [p for p in _walk_own_parts(new) if p.get_content_type() == "multipart/related"]
+    assert len(related) == 1
+    images = [p for p in related[0].iter_parts() if p.get_content_maintype() == "image"]
+    assert len(images) == 1
+    assert images[0]["Content-ID"] == "<image001.png@01DA0000.11223344>"
+    assert images[0].get_content() == PNG
+    # Not duplicated as a regular attachment; the real attachment is still there.
+    names = [a.get_filename() for a in new.iter_attachments()]
+    assert names == ["rechnung.pdf", "original.eml"]
+    assert to_bytes(parse(to_bytes(new))) == to_bytes(new)
+
+
+def test_inline_image_at_top_level_apple_style():
+    # Some clients put the image straight in multipart/mixed with a Content-ID.
+    m = parse(make_mail(html='<p>Hallo <img src="cid:logo"></p>'))
+    m.add_attachment(PNG, maintype="image", subtype="png", cid="<logo>", filename="logo.png", disposition="inline")
+    raw = to_bytes(m)
+    _, new = build(raw)
+    related = [p for p in _walk_own_parts(new) if p.get_content_type() == "multipart/related"]
+    assert related and any(p["Content-ID"] == "<logo>" for p in related[0].iter_parts())
+    assert [a.get_filename() for a in new.iter_attachments()] == ["original.eml"]
+
+
+def test_unreferenced_image_stays_an_attachment():
+    raw = make_mail(html="<p>Hallo</p>", attachments=[("photo.jpg", b"jpeg", "image/jpeg")])
+    _, new = build(raw)
+    assert not [p for p in _walk_own_parts(new) if p.get_content_type() == "multipart/related"]
+    assert "photo.jpg" in [a.get_filename() for a in new.iter_attachments()]
+
+
+# ---- likely languages -------------------------------------------------------
+
+def test_likely_langs_break_ties_on_uncertain_text():
+    # Real py3langid results: short Swedish lines detected as exotic languages.
+    assert detect_lang("Hej! Se bifogad fil.") == "pcm"            # Nigerian Pidgin
+    assert detect_lang("Hej! Se bifogad fil.", likely=["sv"]) == "sv"
+    assert detect_lang("Faktura nr 2024-03-15, OCR 12345", likely=["sv"]) == "sv"
+
+
+def test_likely_langs_do_not_override_confident_detection():
+    assert detect_lang("Merci beaucoup pour votre aide, à demain", likely=["sv"]) == "fr"
+    assert detect_lang(GERMAN, likely=["sv"]) == "de"

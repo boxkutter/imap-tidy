@@ -143,9 +143,11 @@ class FakeTranslator:
         self.src = src
         self.fail = fail
         self.calls = []
+        self.sources = []
 
-    def translate(self, texts):
+    def translate(self, texts, source=None):
         self.calls.append(texts)
+        self.sources.append(source)
         if self.fail:
             raise TranslatorError("service unavailable")
         return [f"EN({t})" for t in texts], self.src
@@ -154,7 +156,7 @@ class FakeTranslator:
 @pytest.fixture
 def account():
     return Account(name="test", host="mail.example.com", user="me@example.com", password="x",
-                   watch="Pending", deliver="INBOX", originals="Originals", skip_langs=["en"],
+                   watch="Pending", deliver="INBOX", originals="Originals", skip_langs=["en"], likely_langs=[],
                    attach_original=True, process_existing=False)
 
 

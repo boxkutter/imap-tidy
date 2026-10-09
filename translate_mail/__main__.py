@@ -100,9 +100,10 @@ def main(argv=None):
              __version__, t.provider, t.target_lang, t.max_chars, len(cfg.accounts))
     for a in cfg.accounts:
         log.info("account %s: user=%s host=%s:%s watch=%s deliver=%s originals=%s skip_langs=%s "
-                 "attach_original=%s process_existing=%s%s",
+                 "likely_langs=%s attach_original=%s process_existing=%s%s",
                  a.name, a.user, a.host, a.port, a.watch, a.deliver, a.originals, ",".join(a.skip_langs),
-                 a.attach_original, a.process_existing, "" if a.verify_tls else " verify_tls=false")
+                 ",".join(a.likely_langs) or "-", a.attach_original, a.process_existing,
+                 "" if a.verify_tls else " verify_tls=false")
 
     stop = threading.Event()
 

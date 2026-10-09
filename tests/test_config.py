@@ -61,6 +61,13 @@ def test_missing_env_var():
         cfg(env={"PASS_PERSONAL": "p1"})
 
 
+def test_likely_langs():
+    c = cfg(EXAMPLE.replace("skip_langs: [en, SV]", "skip_langs: [en]\n    likely_langs: [SV, fi, sv]"))
+    assert c.accounts[0].likely_langs == [] and c.accounts[1].likely_langs == ["sv", "fi"]
+    with pytest.raises(ConfigError, match="likely_langs"):
+        cfg(EXAMPLE.replace("skip_langs: [en, SV]", "likely_langs: sv"))
+
+
 def test_target_lang_always_skipped():
     c = cfg(EXAMPLE.replace("skip_langs: [en, SV]", "skip_langs: [sv]"))
     assert c.accounts[1].skip_langs == ["sv", "en"]

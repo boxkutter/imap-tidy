@@ -277,3 +277,22 @@ def test_log_lines_carry_account_name(account, tcfg, tmp_path, caplog):
     rec = [r for r in caplog.records if "pass-through" in r.getMessage()]
     assert rec and rec[0].threadName == "test"
     assert "language=en" in rec[0].getMessage() and "Treffen" in rec[0].getMessage()
+
+
+# ---- likely_langs ------------------------------------------------------------
+
+def test_likely_lang_is_passed_as_source(account, tcfg, tmp_path):
+    tr = FakeTranslator(src="sv")
+    w, imap = make(account, tcfg, tmp_path, translator=tr, likely_langs=["sv"])
+    w.setup(imap)
+    new_mail(w, imap, make_mail(body="Hej! Se bifogad fil.", subject="Fil"))
+    assert tr.sources == ["sv"]
+    assert parse(imap.msgs("INBOX")[0]["raw"])["Subject"].startswith("[sv→EN]")
+
+
+def test_without_likely_langs_translator_detects(account, tcfg, tmp_path):
+    tr = FakeTranslator()
+    w, imap = make(account, tcfg, tmp_path, translator=tr)
+    w.setup(imap)
+    new_mail(w, imap, make_mail())
+    assert tr.sources == [None]

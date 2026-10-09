@@ -51,6 +51,8 @@ For each new message in the watched folder:
      `X-Original-Subject`, `X-Translated-From` and `X-Translated-By` are added;
    * the body is `multipart/alternative`: plain text (translation, divider,
      original text) and HTML (highlighted translation, `<hr>`, original HTML);
+   * inline images (`cid:` references, e.g. logos and signatures) are embedded
+     again, so the original part of the message shows them as received;
    * original attachments are re-attached, plus the untouched original as
      `original.eml` (`attach_original`);
    * the copy keeps the original's flags (except `\Seen`, so it shows as
@@ -175,6 +177,7 @@ fail at startup instead of being silently ignored.
 | `deliver` | account / defaults | `INBOX` | Where translated, readable and failed mail goes |
 | `originals` | account / defaults | `Originals` | Where originals of translated mail are kept |
 | `skip_langs` | account / defaults | `[en]` | ISO 639-1 codes you read; the target language is always included |
+| `likely_langs` | account / defaults | `[]` | Languages you expect to receive, e.g. `[sv]`. When detection is unsure (short or ambiguous text), these win over exotic look-alikes, and they are given to the translator as the source language instead of letting it guess |
 | `attach_original` | account / defaults | `true` | Attach the untouched original as `original.eml` |
 | `process_existing` | account / defaults | `false` | On first run, also process mail already in `watch` |
 
@@ -270,9 +273,6 @@ Layout: `translate_mail/config.py` (config + validation),
 
 ## Known limitations
 
-* **Inline images** referenced by `cid:` in HTML mail are not shown in the
-  translated copy (broken image icons). Open `original.eml` or the original in
-  `Originals/` to see them.
 * **Truncation**: bodies longer than `max_chars` are cut before translation;
   the translation says `[… truncated for translation …]` and the full original
   is still shown below it.

@@ -17,6 +17,7 @@ DEFAULTS = {
     "deliver": "INBOX",
     "originals": "Originals",
     "skip_langs": ["en"],
+    "likely_langs": [],
     "attach_original": True,
     "process_existing": False,
 }
@@ -49,6 +50,7 @@ class Account:
     deliver: str = "INBOX"
     originals: str = "Originals"
     skip_langs: list[str] = field(default_factory=lambda: ["en"])
+    likely_langs: list[str] = field(default_factory=list)
     attach_original: bool = True
     process_existing: bool = False
 
@@ -93,6 +95,17 @@ def _bool(where, key, value):
     return value
 
 
+def _langs(where, key, value):
+    if not isinstance(value, list) or not all(isinstance(v, str) and v.strip() for v in value):
+        raise ConfigError(f"{where}: '{key}' must be a list of language codes, e.g. [en, sv]")
+    out = []
+    for v in value:
+        v = v.strip().lower()
+        if v not in out:
+            out.append(v)
+    return out
+
+
 def _translator(raw) -> TranslatorConfig:
     if raw is None:
         raw = {}
@@ -133,10 +146,8 @@ def _account(i, raw, defaults, target_lang) -> Account:
     if not 0 < port < 65536:
         raise ConfigError(f"{where}: port {port} is out of range")
 
-    skip = merged["skip_langs"]
-    if not isinstance(skip, list) or not all(isinstance(s, str) and s.strip() for s in skip):
-        raise ConfigError(f"{where}: 'skip_langs' must be a list of language codes, e.g. [en, sv]")
-    skip_langs = sorted({s.strip().lower() for s in skip})
+    skip_langs = sorted(set(_langs(where, "skip_langs", merged["skip_langs"])))
+    likely_langs = _langs(where, "likely_langs", merged["likely_langs"])
     # Mail already in the target language never needs translating.
     target_base = target_lang.split("-")[0]
     if target_base not in skip_langs:
@@ -156,6 +167,7 @@ def _account(i, raw, defaults, target_lang) -> Account:
         deliver=_str(where, "deliver", merged["deliver"]),
         originals=_str(where, "originals", merged["originals"]),
         skip_langs=skip_langs,
+        likely_langs=likely_langs,
         attach_original=_bool(where, "attach_original", merged["attach_original"]),
         process_existing=_bool(where, "process_existing", merged["process_existing"]),
     )
