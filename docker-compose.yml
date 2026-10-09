@@ -1,9 +1,8 @@
 # mail-translate: works as-is with the Unraid 7 Compose Manager plugin.
-# Edit the config block below, put passwords/keys in the .env file, Compose Up.
-#
-# `$${NAME}` (double $) is deliberate: compose leaves it as ${NAME} and
-# mail-translate fills it in from .env at startup, so passwords with any
-# characters are safe and never appear in this file.
+#   1. Put your config in /mnt/user/appdata/mail-translate/config.yml
+#      (copy config.example.yml from the repo and edit it).
+#   2. Put passwords / API keys in the .env file (see .env.example), in single quotes.
+#   3. Compose Up.
 
 services:
   mail-translate:
@@ -16,47 +15,15 @@ services:
       PUID: 99        # nobody  (Unraid appdata default)
       PGID: 100       # users
     volumes:
-      - /mnt/user/appdata/mail-translate:/data   # state (last processed UID per account)
-    configs:
-      - source: mail-translate
-        target: /config.yml
+      - /mnt/user/appdata/mail-translate:/data   # config.yml + state/
 
-  # Optional: self-hosted translator. Uncomment, set `provider: libretranslate`
-  # above and LT_URL=http://libretranslate:5000 in .env.
+  # Optional: run LibreTranslate alongside. Not needed if you already run one;
+  # just set LT_URL in .env to its address.
   # libretranslate:
   #   image: libretranslate/libretranslate:latest
   #   container_name: libretranslate
   #   restart: unless-stopped
   #   environment:
-  #     - LT_LOAD_ONLY=en,de,fr,es,it,nl,pt,sv,pl,ru,ja,zh
+  #     - LT_LOAD_ONLY=en,sv,de,fr,es,it,nl,pt,pl,ru,ja,zh   # trim to what you receive
   #   volumes:
   #     - /mnt/user/appdata/libretranslate:/home/libretranslate/.local
-
-configs:
-  mail-translate:
-    content: |
-      translator:
-        provider: deepl            # deepl | libretranslate | llm
-        target_lang: en
-        max_chars: 30000
-
-      defaults:                    # any account can override these
-        watch: Pending             # Sieve rule files new mail here (see README)
-        deliver: INBOX
-        originals: Originals
-        skip_langs: [en]
-        likely_langs: []           # e.g. [sv] if most foreign mail is Swedish
-        attach_original: true
-        process_existing: false
-
-      accounts:
-        - name: personal
-          host: mail.example.com
-          user: me@example.com
-          password: $${PASS_PERSONAL}
-
-        # - name: work
-        #   host: mail.example.com
-        #   user: me@work-domain.com
-        #   password: $${PASS_WORK}
-        #   skip_langs: [en, sv]

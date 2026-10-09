@@ -1,5 +1,8 @@
-# mail-translate configuration. Copy to config.yml and edit.
+# mail-translate configuration. Copy to config.yml and edit
+# (on Unraid: /mnt/user/appdata/mail-translate/config.yml).
 # Secrets never go here: write ${VAR} and put VAR in .env.
+# Every key under `defaults:` can be overridden per account; the override
+# replaces the default (lists are not merged).
 
 translator:
   provider: deepl            # deepl | libretranslate | llm  (credentials/URLs in .env)

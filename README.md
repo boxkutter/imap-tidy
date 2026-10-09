@@ -71,43 +71,87 @@ You can search or filter on these keywords in Thunderbird and Roundcube.
 ## Setup
 
 You don't need to build anything: GitHub Actions publishes the image to
-`ghcr.io/boxkutter/imap-tidy:latest` on every push to `main`. You need two
-files, `docker-compose.yml` (with the config inline) and `.env` (secrets).
+`ghcr.io/boxkutter/imap-tidy:latest` on every push to `main`. You need three
+small files:
+
+| File | Contains |
+|---|---|
+| [`docker-compose.yml`](docker-compose.yml) | the service (image, volume, PUID/PGID) |
+| `.env` (from [`.env.example`](.env.example)) | passwords and translator keys |
+| `config.yml` (from [`config.example.yml`](config.example.yml)) | accounts, folders, translator |
 
 ### Unraid 7 (Compose Manager plugin)
 
-1. **Docker → Compose → Add New Stack**, name it `mail-translate`.
-2. **Edit Stack → Compose File**: paste [`docker-compose.yml`](docker-compose.yml)
-   and edit the `configs:` block at the bottom: your accounts, folders,
-   translator. Leave passwords as `$${PASS_PERSONAL}` (double `$`).
-3. **Edit Stack → Env File**: paste [`.env.example`](.env.example) and fill
-   in the passwords and translator key, **in single quotes**.
-4. **Compose Up**, then open the stack's logs.
+1. Create the config file at `/mnt/user/appdata/mail-translate/config.yml`
+   (over SMB, or `nano` on the Unraid terminal): start from
+   [`config.example.yml`](config.example.yml) and fill in your accounts.
+   Passwords are written as `password: ${PASS_PERSONAL}`.
+2. **Docker → Compose → Add New Stack**, name it `mail-translate`.
+3. **Edit Stack → Compose File**: paste [`docker-compose.yml`](docker-compose.yml)
+   as is.
+4. **Edit Stack → Env File**: paste [`.env.example`](.env.example) and fill
+   in the passwords (`PASS_PERSONAL=...`, matching the names in `config.yml`)
+   and translator settings. Put every value **in single quotes**: otherwise
+   compose treats `$` as a variable and ` #` as a comment and silently changes
+   your password.
+5. **Compose Up**, then open the stack's logs.
+
+To change the config later, edit `config.yml` and restart the container.
+To update to a new version: **Compose Pull**, then **Compose Up** (the
+startup log shows the version).
 
 State (one small JSON file per account) goes in
 `/mnt/user/appdata/mail-translate/state`, owned by `nobody:users` (99:100);
-change `PUID`/`PGID` if you want another owner. To change the config later,
-edit the stack and Compose Up again.
+set `PUID`/`PGID` in the compose file for another owner.
 
-If the GitHub repo is private, the image is private too: either make the
-package public (GitHub → your profile → Packages → imap-tidy → Package
-settings → Change visibility) or run once on the Unraid terminal
-`docker login ghcr.io -u boxkutter` with a personal access token that has
-`read:packages`.
+If the image is private (it is when the repo is private and nobody changed
+it), either make the package public (GitHub → your profile → Packages →
+imap-tidy → Package settings → Change visibility) or run once on the Unraid
+terminal `docker login ghcr.io -u boxkutter` with a personal access token
+that has `read:packages`.
 
 ### Any other Docker host
 
-Same two files: `curl -O` them (or clone the repo), adjust the volume path
-`/mnt/user/appdata/mail-translate`, `cp .env.example .env`, edit, then
-`docker compose up -d && docker compose logs -f`.
+Same three files: put `docker-compose.yml` and `.env` in a folder, change the
+volume path `/mnt/user/appdata/mail-translate` to a local folder, and put
+`config.yml` in that folder. Then `docker compose up -d && docker compose logs -f`.
 
 To build from source instead of pulling, replace `image:` with
 `build: https://github.com/boxkutter/imap-tidy.git#main` (or `build: .` in a
 clone).
 
-If you prefer a separate config file to the inline block, remove `configs:`
-from the service and put the file at `<appdata>/config.yml` (see
-[`config.example.yml`](config.example.yml)); it is picked up automatically.
+### Alternative: config inline in the compose file
+
+Compose (v2.23+) can carry the config itself, so there is no `config.yml` to
+manage. Add to the service:
+
+```yaml
+    configs:
+      - source: mail-translate
+        target: /config.yml
+```
+
+and at the end of the file:
+
+```yaml
+configs:
+  mail-translate:
+    content: |
+      translator:
+        provider: libretranslate
+      accounts:
+        - name: personal
+          host: mail.example.com
+          user: me@example.com
+          password: $${PASS_PERSONAL}
+```
+
+Two gotchas: write `$${VAR}` (double `$`) so compose leaves it for
+mail-translate to fill in, and keep the indentation: every config line must
+be indented further than `content: |`. Editors (including Unraid's) tend to
+strip indentation on paste, which gives the error
+`additional properties 'accounts', 'defaults', 'translator' not allowed`.
+A `/config.yml` takes precedence over `/data/config.yml`.
 
 ### Notes
 
@@ -118,7 +162,7 @@ from the service and put the file at `<appdata>/config.yml` (see
   `process_existing: true` (once) to also process what is already in the
   watched folder.
 * Container paths: `/data` (state in `/data/state`), config read from
-  `/config.yml` or `/data/config.yml`; override with `CONFIG`, `DATA_DIR`,
+  `/data/config.yml` (or `/config.yml` if present); override with `CONFIG`, `DATA_DIR`,
   `STATE_DIR`. The container starts as root only to `chown` the state dir,
   then runs as `PUID:PGID`.
 
@@ -160,8 +204,8 @@ INBOX and the original is moved to `Originals`. Your phone may notify twice.
 
 ## Configuration reference
 
-The `configs:` block in `docker-compose.yml` (or `config.yml`, see `config.example.yml`). Unknown keys are rejected, so typos
-fail at startup instead of being silently ignored.
+`config.yml` (see [`config.example.yml`](config.example.yml)). Unknown keys
+are rejected, so typos fail at startup instead of being silently ignored.
 
 | Key | Where | Default | Meaning |
 |---|---|---|---|
@@ -181,10 +225,33 @@ fail at startup instead of being silently ignored.
 | `attach_original` | account / defaults | `true` | Attach the untouched original as `original.eml` |
 | `process_existing` | account / defaults | `false` | On first run, also process mail already in `watch` |
 
-Any key under `defaults:` applies to every account unless the account sets
-it. Any string may contain `${VAR}`, expanded from the environment (`.env`);
-an undefined variable is a startup error. Inside the compose file write
-`$${VAR}` so compose passes it through untouched.
+Every key marked "account / defaults" can be set under `defaults:` (applies
+to all accounts) and overridden on any account. An override **replaces** the
+default for that account (lists are not merged). The `translator:` section
+is global: all accounts share one translator.
+
+```yaml
+defaults:
+  skip_langs: [en]
+  likely_langs: [sv]
+
+accounts:
+  - name: personal
+    host: mail.example.com
+    user: me@example.com
+    password: ${PASS_PERSONAL}      # uses all defaults
+
+  - name: work
+    host: mail.example.com
+    user: me@work-domain.com
+    password: ${PASS_WORK}
+    skip_langs: [en, sv]            # replaces [en]: Swedish passes through here
+    likely_langs: [fi]              # replaces [sv]
+    watch: INBOX                    # simple setup for this account only
+```
+
+Any string may contain `${VAR}`, expanded from the environment (`.env`); an
+undefined variable is a startup error.
 
 Environment variables (`.env`):
 
@@ -202,7 +269,7 @@ Environment variables (`.env`):
 | `provider` | Needs | Notes |
 |---|---|---|
 | `deepl` | `DEEPL_API_KEY` (free tier: 500k chars/month) | Best quality for the effort. Default. |
-| `libretranslate` | the `libretranslate` service in `docker-compose.yml` (uncomment it) | Fully self-hosted; nothing leaves your server. Needs a few GB of RAM/disk for models. |
+| `libretranslate` | `LT_URL` pointing at your LibreTranslate (or uncomment the service in `docker-compose.yml`) | Fully self-hosted; nothing leaves your server. |
 | `llm` | `LLM_URL`, `LLM_MODEL`, optional `LLM_API_KEY` | Any `/v1/chat/completions` endpoint. Local Ollama: `LLM_URL=http://ollama:11434/v1`, `LLM_MODEL=qwen2.5:7b`, no key. |
 
 Every translator call has a timeout and is retried once (after 2 s) on
@@ -211,17 +278,35 @@ key, HTTP 403) fail immediately.
 
 With DeepL you can set `target_lang: en-gb` or `en-us` for a specific variant.
 
+**Using an existing LibreTranslate server:** set `LT_URL` to its LAN address,
+e.g. `LT_URL='http://192.168.1.10:5000'` (not `localhost`: inside the
+container that is the container itself), plus `LT_API_KEY` if you started it
+with `--api-keys`. If you limit languages with `LT_LOAD_ONLY`, include `en`
+and every language you receive. Keep `max_chars` below LibreTranslate's
+`--char-limit` if you set one, and consider `max_chars: 10000` on a CPU-only
+server so long newsletters don't hit the 120 s request timeout. Quick test
+from the Unraid terminal:
+
+```bash
+docker exec mail-translate python -c "import requests; print(requests.post('http://192.168.1.10:5000/translate', json={'q':'God morgon, hur mår du?','source':'auto','target':'en','format':'text'}, timeout=60).json())"
+```
+
+**Language detection:** detection runs locally first. With `likely_langs`
+set (e.g. `[sv]`), a mail detected as one of those languages is sent to the
+translator with that source language; otherwise the translator detects it
+itself (LibreTranslate on the body, so a short subject can't mislead it).
+
 ## Reading the logs
 
 Everything goes to stdout: `docker compose logs -f mail-translate`. Each line
 carries the account name (`[main]` for startup):
 
 ```
-INFO    [main] mail-translate 1.0.0 starting: translator=deepl target=en max_chars=30000, 2 account(s)
-INFO    [main] account personal: user=me@example.com host=mail.example.com:993 watch=Pending deliver=INBOX originals=Originals skip_langs=en ...
+INFO    [main] mail-translate 1.1.0 starting: translator=libretranslate target=en max_chars=30000, 2 account(s)
+INFO    [main] account personal: user=me@example.com host=mail.example.com:993 watch=Pending deliver=INBOX originals=Originals skip_langs=en likely_langs=sv ...
 INFO    [personal] connecting to mail.example.com:993 as me@example.com
 INFO    [personal] connected; watching Pending (last uid 1203, uidvalidity 1791537148)
-INFO    [personal] uid 1204: deepl responded in 0.8s
+INFO    [personal] uid 1204: libretranslate responded in 1.8s
 INFO    [personal] uid 1204: translated de→en: Treffen am Donnerstag
 INFO    [personal] uid 1205: language=en, pass-through: Meeting Thursday
 WARNING [personal] translator request failed (...: HTTP 503: ...), retrying in 2s
