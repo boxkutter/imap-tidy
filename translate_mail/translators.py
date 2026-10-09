@@ -82,18 +82,25 @@ class LibreTranslate:
         self.target = target_lang.split("-")[0]
 
     def translate(self, texts):
-        out, src = [], ""
-        for text in texts:
-            payload = {"q": text, "source": "auto", "target": self.target, "format": "text"}
-            if self.key:
-                payload["api_key"] = self.key
-            data = post_json(self.url, payload, timeout=120)
+        # LibreTranslate detects the language per request, and is unreliable on short
+        # text like a subject line. So translate the longest text (the body) first with
+        # auto-detection, then translate the rest *from that language*: the label and
+        # the subject translation then agree with the body.
+        out, src = [None] * len(texts), ""
+        for i in sorted(range(len(texts)), key=lambda i: -len(texts[i])):
+            data = self._post(texts[i], src or "auto")
             try:
-                out.append(data["translatedText"])
+                out[i] = data["translatedText"]
             except (KeyError, TypeError):
                 raise TranslatorError(f"unexpected LibreTranslate response: {str(data)[:300]}") from None
             src = src or ((data.get("detectedLanguage") or {}).get("language") or "")
         return out, src.lower()
+
+    def _post(self, text, source):
+        payload = {"q": text, "source": source, "target": self.target, "format": "text"}
+        if self.key:
+            payload["api_key"] = self.key
+        return post_json(self.url, payload, timeout=120)
 
 
 SEP = "<<<SEP>>>"

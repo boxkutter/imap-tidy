@@ -54,13 +54,30 @@ def test_deepl_bad_response():
 
 def test_libretranslate():
     t = LibreTranslate("en", {"LT_URL": "http://lt:5000/", "LT_API_KEY": "abc"})
-    replies = [resp(json_data={"translatedText": "Hello", "detectedLanguage": {"language": "de", "confidence": 90}}),
-               resp(json_data={"translatedText": "World"})]
+    replies = [resp(json_data={"translatedText": "Hello world, how are you", "detectedLanguage": {"language": "de", "confidence": 90}}),
+               resp(json_data={"translatedText": "Hi"})]
     with mock.patch("requests.post", side_effect=replies) as post:
-        assert t.translate(["Hallo", "Welt"]) == (["Hello", "World"], "de")
+        assert t.translate(["Hallo", "Hallo Welt, wie geht es dir"]) == (["Hi", "Hello world, how are you"], "de")
     assert post.call_args_list[0].args == ("http://lt:5000/translate",)
-    assert post.call_args_list[0].kwargs["json"] == {"q": "Hallo", "source": "auto", "target": "en",
-                                                     "format": "text", "api_key": "abc"}
+    # Body (longest) first with auto-detection ...
+    assert post.call_args_list[0].kwargs["json"] == {"q": "Hallo Welt, wie geht es dir", "source": "auto",
+                                                     "target": "en", "format": "text", "api_key": "abc"}
+    # ... then the subject is translated from the language detected in the body.
+    assert post.call_args_list[1].kwargs["json"]["q"] == "Hallo"
+    assert post.call_args_list[1].kwargs["json"]["source"] == "de"
+
+
+def test_libretranslate_label_from_body_not_subject():
+    # Real-world case: a short Swedish subject misdetected as French.
+    t = LibreTranslate("en", {})
+    def fake_post(url, json, headers=None, timeout=None):
+        if json["source"] == "auto":
+            lang = "fr" if len(json["q"]) < 10 else "sv"
+            return resp(json_data={"translatedText": "x", "detectedLanguage": {"language": lang}})
+        return resp(json_data={"translatedText": "y"})
+    with mock.patch("requests.post", side_effect=fake_post):
+        _, src = t.translate(["Hej då!", "Hej, tack för ditt meddelande. Mötet är på torsdag klockan tio."])
+    assert src == "sv"
 
 
 def test_libretranslate_default_url_no_key():
